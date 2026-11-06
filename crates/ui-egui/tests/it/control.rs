@@ -179,7 +179,7 @@ fn page_shadows_are_an_observable_app_wide_preference() {
 fn reduced_effects_are_observable_and_settable_for_the_session() {
     let (mut h, c) = harness();
     let state = |h: &mut _, c: &_| ok(h, c, "ui.state", json!({}))["reduced_effects"].clone();
-    assert_eq!(state(&mut h, &c), json!({ "mode": "auto", "active": false, "software_renderer": null }));
+    assert_eq!(state(&mut h, &c), json!({ "mode": "auto", "active": false, "software_renderer": null, "max_fps": null }));
     for (value, active) in [("on", true), ("off", false), ("AUTO", false)] {
         ok(&mut h, &c, "ui.set", json!({ "key": "reduced_effects", "value": value }));
         assert_eq!(state(&mut h, &c)["active"], active, "{value}");

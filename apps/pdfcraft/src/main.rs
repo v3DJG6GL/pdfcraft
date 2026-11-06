@@ -268,7 +268,9 @@ fn main() -> eframe::Result {
     let reduced_effects = reduced_effects_choice(std::env::var("PDFCRAFT_REDUCED_EFFECTS").ok().as_deref());
     // Fixed before the adapter is known, so it follows the adapter the last start drew on.
     let dithering = reduced_effects.dithering_at_start(saved_settings().is_some_and(|s| effects::saved(&s)));
-    let launch = Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged, reduced_effects, dithering };
+    let max_fps = max_fps_choice(std::env::var("PDFCRAFT_MAX_FPS").ok().as_deref());
+    let launch =
+        Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged, reduced_effects, dithering, max_fps };
     // Finder, Open With and the Dock deliver files as Apple events, not arguments; catch the one
     // that launched us as well as later ones. Lives until the event loop returns.
     #[cfg(target_os = "macos")]
@@ -340,6 +342,19 @@ fn reduced_effects_choice(value: Option<&str>) -> effects::ReducedEffects {
         log::warn!("PDFCRAFT_REDUCED_EFFECTS={v:?} is neither 0 nor 1; effects follow the graphics adapter");
     }
     choice
+}
+
+/// `PDFCRAFT_MAX_FPS`: frames a second while effects are reduced (`0`: no cap); otherwise
+/// [`effects::DEFAULT_MAX_FPS`]. Anything else is reported and gets the default.
+fn max_fps_choice(value: Option<&str>) -> u32 {
+    match (effects::max_fps_from_env(value), value) {
+        (Some(fps), _) => fps,
+        (None, Some(v)) if !v.trim().is_empty() => {
+            log::warn!("PDFCRAFT_MAX_FPS={v:?} is not 0 to {}; using {}", effects::MAX_FPS_LIMIT, effects::DEFAULT_MAX_FPS);
+            effects::DEFAULT_MAX_FPS
+        }
+        _ => effects::DEFAULT_MAX_FPS,
+    }
 }
 
 /// The app's saved settings, read before eframe opens them (which is after the renderer
@@ -431,6 +446,8 @@ struct Launch {
     reduced_effects: effects::ReducedEffects,
     /// Whether egui dithers ([`effects::ReducedEffects::dithering_at_start`]).
     dithering: bool,
+    /// `PDFCRAFT_MAX_FPS`: the frame cap while effects are reduced.
+    max_fps: u32,
 }
 
 /// Whether the window is a native Wayland one (not X11 or XWayland).
@@ -493,7 +510,8 @@ fn app_creator<'a>(
     instance: Option<&'a single_instance::Server>,
     #[cfg(target_os = "macos")] apple_events: &'a apple_events::AppleEvents,
 ) -> eframe::AppCreator<'a> {
-    let Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged, reduced_effects, dithering: _ } = launch;
+    let Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged, reduced_effects, dithering, max_fps } =
+        launch;
     Box::new(move |cc| {
         started.set(true);
         let mut app = PdfCraftApp::new();
@@ -501,6 +519,7 @@ fn app_creator<'a>(
         app.units = pdfcraft_ui_egui::units::Unit::system();
         // `--reduced_effects` (an option, applied below) overrides the environment.
         app.effects.mode = reduced_effects;
+        app.effects.frame_cap = effects::FrameCap::per_second(max_fps);
         #[cfg(target_os = "linux")]
         app.enable_desktop_theme();
         // The system's reopen-windows choice (macOS) starts the preference; a saved choice replaces it.
@@ -557,8 +576,10 @@ fn app_creator<'a>(
                 adapter.backend
             );
             adapter_found(&mut app, adapter.device_type);
+            log_effects(&app, dithering);
         } else {
             log::info!("renderer: OpenGL (glow)");
+            log_effects(&app, dithering);
         }
         // A portable marker whose data folder can't be written (#157): say where settings went.
         if let Some(w) = &pdfcraft_ui_egui::portable::current().unwritable {
@@ -596,6 +617,19 @@ fn app_creator<'a>(
 fn adapter_found(app: &mut PdfCraftApp, device_type: eframe::wgpu::DeviceType) {
     notify_software_renderer(app, device_type);
     app.effects.set_software_renderer(device_type == eframe::wgpu::DeviceType::Cpu);
+}
+
+/// Say in the log whether effects are reduced and why, so a report shows it.
+fn log_effects(app: &PdfCraftApp, dithering: bool) {
+    let why = match app.effects.mode {
+        effects::ReducedEffects::On => "PDFCRAFT_REDUCED_EFFECTS=1",
+        effects::ReducedEffects::Off => "PDFCRAFT_REDUCED_EFFECTS=0",
+        effects::ReducedEffects::Auto if app.effects.reduced() => "software renderer",
+        effects::ReducedEffects::Auto => "graphics processor",
+    };
+    let cap = app.effects.max_fps().map_or_else(|| "no frame cap".to_string(), |fps| format!("max {fps} fps"));
+    let state = if app.effects.reduced() { "on" } else { "off" };
+    log::info!("reduced effects: {state} ({why}), {cap}, dithering {}", if dithering { "on" } else { "off" });
 }
 
 /// Tell the user when wgpu draws on the processor (WARP on Windows, llvmpipe on Linux) rather than

@@ -194,6 +194,23 @@ fn a_software_rasterizer_reduces_effects_and_a_gpu_does_not() {
 }
 
 #[test]
+fn a_desktop_start_caps_frames_only_while_effects_are_reduced() {
+    use pdfcraft_ui_egui::effects::{self, FrameCap};
+    assert_eq!(super::max_fps_choice(None), effects::DEFAULT_MAX_FPS);
+    assert_eq!(super::max_fps_choice(Some("20")), 20);
+    assert_eq!(super::max_fps_choice(Some("0")), 0);
+    assert_eq!(super::max_fps_choice(Some("fast")), effects::DEFAULT_MAX_FPS);
+    let mut app = super::PdfCraftApp::new();
+    app.effects.frame_cap = FrameCap::per_second(super::max_fps_choice(None));
+    super::adapter_found(&mut app, eframe::wgpu::DeviceType::Cpu);
+    assert_eq!(app.effects.max_fps(), Some(30));
+    let mut gpu = super::PdfCraftApp::new();
+    gpu.effects.frame_cap = FrameCap::per_second(30);
+    super::adapter_found(&mut gpu, eframe::wgpu::DeviceType::DiscreteGpu);
+    assert_eq!(gpu.effects.max_fps(), None, "a GPU draws uncapped");
+}
+
+#[test]
 fn the_software_flag_is_read_from_settings_as_eframe_writes_them() {
     use pdfcraft_ui_egui::effects;
     let app_ron = |key: &str, json: &str| {

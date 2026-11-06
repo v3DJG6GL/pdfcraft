@@ -481,6 +481,12 @@ impl eframe::App for PdfCraftApp {
     /// would keep the place the pointer entered at: tell it where the pointer really is, so the
     /// page grid can show (and use) the gap under it.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // A software rasterizer draws at most so many frames a second (`effects::FrameCap`). The
+        // wait is at most one frame's interval; input meanwhile queues for the next frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(wait) = self.effects.frame_wait(web_time::Instant::now(), raw.screen_rect.map_or(egui::Vec2::ZERO, |r| r.size())) {
+            std::thread::sleep(wait);
+        }
         // The button's release a window move or resize kept from egui.
         window_controls::release_after_desktop_grab(ctx, raw);
         // The wheel after Alt+Tab back, before the mouse has moved (#1518).

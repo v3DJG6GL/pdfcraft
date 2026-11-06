@@ -162,6 +162,7 @@ impl Host for crate::PdfCraftApp {
                 "mode": self.effects.mode.name(),
                 "active": self.effects.reduced(),
                 "software_renderer": self.effects.software_renderer(),
+                "max_fps": self.effects.max_fps(),
             },
             "language": self.language,
             "notice": self.toast.as_ref().map(|t| t.0.clone()),
