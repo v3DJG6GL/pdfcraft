@@ -160,6 +160,25 @@ fn page_shadows_are_an_observable_app_wide_preference() {
 }
 
 #[test]
+fn reduced_effects_are_observable_and_settable_for_the_session() {
+    let (mut h, c) = harness();
+    let state = |h: &mut _, c: &_| ok(h, c, "ui.state", json!({}))["reduced_effects"].clone();
+    assert_eq!(state(&mut h, &c), json!({ "mode": "auto", "active": false, "software_renderer": null }));
+    for (value, active) in [("on", true), ("off", false), ("AUTO", false)] {
+        ok(&mut h, &c, "ui.set", json!({ "key": "reduced_effects", "value": value }));
+        assert_eq!(state(&mut h, &c)["active"], active, "{value}");
+    }
+    ok(&mut h, &c, "ui.set", json!({ "key": "reduced_effects", "value": "on" }));
+    for value in ["maybe", "1", ""] {
+        assert!(call(&mut h, &c, "ui.set", json!({ "key": "reduced_effects", "value": value })).is_err(), "{value:?}");
+        assert_eq!(state(&mut h, &c)["mode"], "on", "a refused value leaves the mode");
+    }
+    assert_eq!(ok(&mut h, &c, "ui.state", json!({}))["show_page_edge_shadows"], true, "the preference is reported as saved");
+    let saved: serde_json::Value = serde_json::from_str(&h.state().persist()).unwrap();
+    assert!(saved.get("reduced_effects").is_none(), "the session override is never saved");
+}
+
+#[test]
 fn control_resize_reports_observed_dimensions_and_rejects_invalid_sizes() {
     let (mut h, c) = harness();
     for params in [

@@ -2523,3 +2523,43 @@ fn a_document_press_releases_pages_keyboard_focus_without_escape() {
     sidebar_key(&mut h, Key::A, Modifiers::COMMAND);
     assert!(h.state().views[0].selected.is_empty(), "Ctrl+A now belongs to the viewer, not page thumbnails");
 }
+
+/// Reduced effects (a software rasterizer draws the window) ask for no animations the way the
+/// system setting does: a wheel notch lands whole in the frame it arrives, unless the user chose
+/// animation effects On.
+#[test]
+fn reduced_effects_stop_animations_the_system_setting_allows() {
+    use pdfcraft_ui_egui::scroll_speed::ScrollSpeed;
+    let base = ScrollSpeed::default().line_points();
+    // kittest turns egui's animations off; give them back egui's own times, as in the app.
+    let animated = |mut h: Harness<'static, PdfCraftApp>| {
+        let stock = egui::Style::default();
+        h.ctx.all_styles_mut(|s| (s.animation_time, s.scroll_animation) = (stock.animation_time, stock.scroll_animation));
+        h.run_steps(2);
+        h
+    };
+    let notch = |h: &mut Harness<'static, PdfCraftApp>| {
+        let at = h.state().views[0].viewport_rect().center();
+        h.hover_at(at);
+        h.run_steps(2);
+        h.event(wheel(MouseWheelUnit::Line, -1.0, TouchPhase::Move));
+        scroll_over(h, 2)
+    };
+
+    let mut eased = animated(harness_stepping(1.0 / 60.0, &[("layout", "continuous"), ("zoom", "300")]));
+    assert!(eased.ctx.global_style().animation_time > 0.0);
+    let moved = notch(&mut eased);
+    assert!(moved < 0.9 * base, "without reduced effects a notch eases: moved {moved} of {base}");
+
+    let mut reduced = animated(harness_stepping(1.0 / 60.0, &[("layout", "continuous"), ("zoom", "300"), ("reduced_effects", "on")]));
+    assert_eq!(reduced.ctx.global_style().animation_time, 0.0);
+    let moved = notch(&mut reduced);
+    assert!((moved - base).abs() < 1.0, "with reduced effects a notch lands whole: moved {moved} of {base}");
+    assert_eq!(reduced.state().animation_effects, pdfcraft_ui_egui::motion::AnimationEffects::System, "the preference is untouched");
+
+    let mut chosen =
+        animated(harness_stepping(1.0 / 60.0, &[("layout", "continuous"), ("zoom", "300"), ("reduced_effects", "on"), ("animation_effects", "on")]));
+    assert!(chosen.ctx.global_style().animation_time > 0.0, "an explicit On stands");
+    let moved = notch(&mut chosen);
+    assert!(moved < 0.9 * base, "and keeps easing: moved {moved} of {base}");
+}

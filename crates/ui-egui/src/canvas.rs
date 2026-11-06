@@ -1192,6 +1192,8 @@ struct PageEnv<'a> {
     navigation_enabled: bool,
     paper: Color32,
     show_page_edge_shadows: bool,
+    /// Reduced effects (`platform/effects.rs`): no paper under a page's loaded raster.
+    reduced_effects: bool,
     ppp: f32,
     precise_scroll: Vec2,
     prefs: &'a comments::CommentPrefs,
@@ -1371,7 +1373,7 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
     if view.show_page_gaps && frame.env.show_page_edge_shadows {
         painter.add(egui::epaint::Shadow { offset: [0, 3], blur: 14, spread: 0, color: t.page_shadow }.as_shape(r, CornerRadius::ZERO));
     }
-    painter.rect_filled(r, CornerRadius::ZERO, paper);
+    let paper_shape = painter.add(egui::Shape::rect_filled(r, CornerRadius::ZERO, paper));
     if let Some(err) = view.errors.get(&i) {
         painter.rect_filled(r, CornerRadius::ZERO, Color32::from_rgb(0xFB, 0xF4, 0xF4));
         icons::paint(
@@ -1426,6 +1428,12 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
         match view.pages.get(&i) {
             Some(p) => {
                 if !tiled && p.tag == want_tag {
+                    // The raster is opaque and covers the page, so the paper under it is only
+                    // pixels to fill; with reduced effects it goes. Kept while an image drag
+                    // cuts holes in the raster, and under backdrops and tiles.
+                    if frame.env.reduced_effects && active_drag_suppress.is_none() {
+                        painter.set(paper_shape, egui::Shape::Noop);
+                    }
                     paint_image_suppressed(&xf.texel_aligned(p.tex.size(), ppp), painter, p.tex.id(), 0.0, 0.0, 1.0, 1.0, active_drag_suppress, true);
                 } else {
                     // A backdrop, or a raster at an older scale until the new one arrives.
@@ -2925,6 +2933,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     if key_scroll != 0.0 || key_side != 0.0 {
         app.views[index].end_find_following();
     }
+    // Read before the view is borrowed: decoration and motion as they apply now.
+    let page_edge_shadows = app.page_edge_shadows();
+    let reduced_effects = app.effects.reduced();
+    let animation_effects = app.effective_animation_effects();
     // The Search panel closed: its search moves to the find bar.
     let search_open = app.right == Some(crate::RightPanel::Search);
     if let Some(f) = app.views[index].find.as_mut()
@@ -2979,7 +2991,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     if view.organize {
         // One remembered grid size for every document, kept in the settings.
         view.set_grid_zoom(organize_zoom);
-        organize_grid(view, doc, unobstructed, app.show_page_edge_shadows, invert_middle, ui, &t);
+        organize_grid(view, doc, unobstructed, page_edge_shadows, invert_middle, ui, &t);
         app.organize_zoom = view.grid_zoom();
         return;
     }
@@ -3016,7 +3028,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // keys. Runs before `visible_pages` so the frame that turns the page draws it.
     let (single_paging, edge_turned) = single_page_paging(ui, view, &PagingCx { row: &row, rects: &rects, avail, middle_gesture, unobstructed });
     let now = ui.input(|i| i.time);
-    let animates = app.animation_effects.animates(app.motion.reduced);
+    let animates = animation_effects.animates(app.motion.reduced);
     let wheel_enabled = navigation_enabled && unobstructed && !middle_gesture;
     let Wheel { precise_scroll, line_base, coarse_scroll, has_page, paging_owns_vertical } =
         read_wheel(ui, view, avail, single_paging, edge_turned, wheel_enabled, animates);
@@ -3138,7 +3150,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         modal,
         navigation_enabled,
         paper,
-        show_page_edge_shadows: app.show_page_edge_shadows,
+        show_page_edge_shadows: page_edge_shadows,
+        reduced_effects,
         ppp,
         precise_scroll,
         prefs,
@@ -3170,7 +3183,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         can_paste_image,
     };
     let mut page_out = PageOut::default();
-    let out = page_scroll(ui, scroll, egui::Id::unique(("page-view-scope", view.id)), app.show_page_edge_shadows, |ui, viewport| {
+    let out = page_scroll(ui, scroll, egui::Id::unique(("page-view-scope", view.id)), page_edge_shadows, |ui, viewport| {
         draw_pages(ui, viewport, view, &env, &mut page_out, &mut app.signature_preview)
     });
     let PageOut {

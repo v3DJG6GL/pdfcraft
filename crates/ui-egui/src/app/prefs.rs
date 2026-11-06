@@ -155,6 +155,8 @@ impl PdfCraftApp {
         // Set outside json! above, which is at serde_json's macro recursion limit.
         v["hide_empty_highlight_hover"] = serde_json::Value::Bool(self.comment_prefs.hide_empty_highlight_hover);
         v["show_page_edge_shadows"] = self.show_page_edge_shadows.into();
+        // Read by the desktop app before the next window opens (egui's dithering).
+        v[effects::KEY] = self.effects.saved_value().into();
         // Not `check_updates_at_start`: that key was an opt-in of its own, off unless chosen, and
         // settings written then would turn this off unasked.
         v["update_check_at_start"] = self.update_check_at_start.into();
@@ -319,6 +321,7 @@ impl PdfCraftApp {
         if let Some(show) = v["show_page_edge_shadows"].as_bool() {
             self.show_page_edge_shadows = show;
         }
+        self.effects.restore(v);
         if let Some(width) = v["fill_text_border"].as_f64().and_then(fill_sign::valid_text_border) {
             self.fill_text_default.width = width;
         }

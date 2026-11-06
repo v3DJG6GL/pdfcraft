@@ -31,6 +31,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pdfcraft_ui_egui::PdfCraftApp;
+use pdfcraft_ui_egui::effects;
 
 #[cfg(target_os = "macos")]
 mod apple_events;
@@ -261,7 +262,10 @@ fn main() -> eframe::Result {
         single_instance::Claim::Alone => None,
     };
     let choice = renderer_choice(std::env::var("PDFCRAFT_RENDERER").ok().as_deref());
-    let launch = Launch { files, options, control_file, create_images, integrated, window_controls, two_paged };
+    let reduced_effects = reduced_effects_choice(std::env::var("PDFCRAFT_REDUCED_EFFECTS").ok().as_deref());
+    // Fixed before the adapter is known, so it follows the adapter the last start drew on.
+    let dithering = reduced_effects.dithering_at_start(saved_settings().is_some_and(|s| effects::saved(&s)));
+    let launch = Launch { files, options, control_file, create_images, integrated, window_controls, two_paged, reduced_effects, dithering };
     // Finder, Open With and the Dock deliver files as Apple events, not arguments; catch the one
     // that launched us as well as later ones. Lives until the event loop returns.
     #[cfg(target_os = "macos")]
@@ -271,7 +275,7 @@ fn main() -> eframe::Result {
     let first = if choice == RendererChoice::Gl { eframe::Renderer::Glow } else { eframe::Renderer::Wgpu };
     let result = eframe::run_native(
         "PdfCraft",
-        native_options(launch.integrated, launch.window_controls.is_some(), first),
+        native_options(launch.integrated, launch.window_controls.is_some(), first, launch.dithering),
         app_creator(
             launch.clone(),
             Rc::clone(&started),
@@ -289,7 +293,7 @@ fn main() -> eframe::Result {
             log::error!("the GPU renderer (wgpu) didn't start: {e}. Starting with OpenGL instead; set PDFCRAFT_RENDERER=gl to skip wgpu.");
             eframe::run_native(
                 "PdfCraft",
-                native_options(launch.integrated, launch.window_controls.is_some(), eframe::Renderer::Glow),
+                native_options(launch.integrated, launch.window_controls.is_some(), eframe::Renderer::Glow, launch.dithering),
                 app_creator(
                     launch,
                     started,
@@ -322,6 +326,41 @@ fn renderer_choice(value: Option<&str>) -> RendererChoice {
     }
 }
 
+/// `PDFCRAFT_REDUCED_EFFECTS`: `1` forces reduced effects, `0` forbids them, unset leaves them to
+/// the adapter. Anything else is reported and left to the adapter.
+fn reduced_effects_choice(value: Option<&str>) -> effects::ReducedEffects {
+    let choice = effects::ReducedEffects::from_env(value);
+    if let Some(v) = value
+        && choice == effects::ReducedEffects::Auto
+        && !v.trim().is_empty()
+    {
+        log::warn!("PDFCRAFT_REDUCED_EFFECTS={v:?} is neither 0 nor 1; effects follow the graphics adapter");
+    }
+    choice
+}
+
+/// The app's saved settings, read before eframe opens them (which is after the renderer
+/// started). `None` when there are none or they can't be read; eframe logs that itself.
+fn saved_settings() -> Option<serde_json::Value> {
+    use std::io::Read;
+    // Far more than any settings file; a larger one isn't read here (eframe still opens it).
+    const MAX_BYTES: u64 = 16 * 1024 * 1024;
+    let file = std::fs::File::open(settings_dir()?.join("app.ron")).ok()?;
+    let mut text = String::new();
+    file.take(MAX_BYTES + 1).read_to_string(&mut text).ok()?;
+    if text.len() as u64 > MAX_BYTES {
+        return None;
+    }
+    settings_in(&text)
+}
+
+/// The app's settings in the text of `app.ron`: eframe's RON map from key to string, where they
+/// are the JSON under the app's storage key ([`PdfCraftApp::persist`]).
+fn settings_in(app_ron: &str) -> Option<serde_json::Value> {
+    let entries: std::collections::HashMap<String, String> = ron::from_str(app_ron).ok()?;
+    serde_json::from_str(entries.get("pdfcraft").or_else(|| entries.get(LEGACY_STORAGE_KEY))?).ok()
+}
+
 /// Whether a failed run should be retried with OpenGL: only when wgpu was tried first by choice of
 /// nobody, and it failed before the app was created (so while starting the renderer, not later).
 fn retry_with_gl(choice: RendererChoice, app_started: bool) -> bool {
@@ -329,7 +368,7 @@ fn retry_with_gl(choice: RendererChoice, app_started: bool) -> bool {
 }
 
 /// The window and renderer settings for one run.
-fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer) -> eframe::NativeOptions {
+fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer, dithering: bool) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("PdfCraft")
         .with_inner_size([1440.0, 920.0])
@@ -355,6 +394,9 @@ fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer)
     // PdfCraft installs its own last-resort system face (`PDFCRAFT_SYSTEM_FONTS`); eframe's
     // provider would read every installed face, including proprietary ones, into every UI pass.
     native.system_font_fallback = false;
+    // Noise in every pixel against banding in gradients; a software rasterizer computes it on
+    // the CPU, so it is left out after a start that drew in software (`effects`).
+    native.dithering = dithering;
     if renderer == eframe::Renderer::Wgpu {
         configure_gpu(&mut native);
     }
@@ -372,6 +414,10 @@ struct Launch {
     /// The window buttons the app draws, when the desktop leaves the frame to it.
     window_controls: Option<pdfcraft_ui_egui::window_controls::Layout>,
     two_paged: bool,
+    /// `PDFCRAFT_REDUCED_EFFECTS`.
+    reduced_effects: effects::ReducedEffects,
+    /// Whether egui dithers ([`effects::ReducedEffects::dithering_at_start`]).
+    dithering: bool,
 }
 
 /// Whether the window is a native Wayland one (not X11 or XWayland).
@@ -392,12 +438,14 @@ fn app_creator<'a>(
     instance: Option<&'a single_instance::Server>,
     #[cfg(target_os = "macos")] apple_events: &'a apple_events::AppleEvents,
 ) -> eframe::AppCreator<'a> {
-    let Launch { files, options, control_file, create_images, integrated, window_controls, two_paged } = launch;
+    let Launch { files, options, control_file, create_images, integrated, window_controls, two_paged, reduced_effects, dithering: _ } = launch;
     Box::new(move |cc| {
         started.set(true);
         let mut app = PdfCraftApp::new();
         // First start (or settings from before Units existed): the region's unit.
         app.units = pdfcraft_ui_egui::units::Unit::system();
+        // `--reduced_effects` (an option, applied below) overrides the environment.
+        app.effects.mode = reduced_effects;
         #[cfg(target_os = "linux")]
         app.enable_desktop_theme();
         // The system's reopen-windows choice (macOS) starts the preference; a saved choice replaces it.
@@ -450,7 +498,7 @@ fn app_creator<'a>(
                 adapter.device_type,
                 adapter.backend
             );
-            notify_software_renderer(&mut app, adapter.device_type);
+            adapter_found(&mut app, adapter.device_type);
         } else {
             log::info!("renderer: OpenGL (glow)");
         }
@@ -480,6 +528,13 @@ fn app_creator<'a>(
         }
         Ok(Box::new(app))
     })
+}
+
+/// What the app does about the adapter wgpu draws on: announce a software rasterizer, and reduce
+/// effects while one draws (`pdfcraft_ui_egui::effects`).
+fn adapter_found(app: &mut PdfCraftApp, device_type: eframe::wgpu::DeviceType) {
+    notify_software_renderer(app, device_type);
+    app.effects.set_software_renderer(device_type == eframe::wgpu::DeviceType::Cpu);
 }
 
 /// Tell the user when wgpu draws on the processor (WARP on Windows, llvmpipe on Linux) rather than

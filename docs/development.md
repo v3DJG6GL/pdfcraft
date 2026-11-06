@@ -126,6 +126,36 @@ reach this retry instead of the uncaptured-error panic handler. This does not fi
 driver's shader compilation, and explicit `PDFCRAFT_RENDERER=wgpu` still disables the retry.
 `PDFCRAFT_RENDERER` skips it or chooses OpenGL from the start.
 
+## Software renderers
+
+Without a graphics processor (a virtual machine, a Remote Desktop or Citrix session), wgpu draws on
+the CPU: WARP ("Microsoft Basic Render Driver") on Windows, llvmpipe or lavapipe elsewhere, and the
+log says `(Cpu, …)` after the adapter's name (#1582, #4739). Every frame then fills its pixels in
+software. Measured on lavapipe with a 1440×920 window, a frame costs about 100 ms of CPU against
+2 ms on a GPU, nearly all of it pixel fill, so the cost follows the area drawn: page drop shadows
+alone were a fifth of it.
+
+While wgpu's adapter is a CPU, PdfCraft reduces effects (`crates/ui-egui/src/platform/effects.rs`):
+
+- no page drop shadows and no edge fades in the page view and Organize Pages. Preferences ▸ Show
+  page edge shadows keeps its saved value, which applies again with a GPU;
+- no paper under a page whose raster has loaded (it is opaque and covers the page). The paper stays
+  while a page renders, under tiles, and while an image is dragged;
+- no shadows under dialogs, menus, the floating hotbar, the find bar or the snapshot bar, and no
+  hover lift on Home cards;
+- no blinking text cursor, which redraws the window each blink;
+- no animations while Preferences ▸ Animation effects follows the system setting: a wheel notch
+  scrolls in the frame it arrives, as with the system's own setting off. An explicit On stays on;
+- no dithering from the next start on. egui fixes it when the renderer is created, before the
+  adapter is known, so the app saves which adapter the last start drew on
+  (`last_start_software_renderer` in `app.ron`) and reads it before the window opens.
+
+`PDFCRAFT_REDUCED_EFFECTS=1` reduces effects on any adapter, `0` never does, and either one also
+decides dithering for that start. On the control channel, `ui.set reduced_effects auto|on|off`
+(or `--reduced_effects`) overrides it for the session, and `ui.state.reduced_effects` reports
+`{mode, active, software_renderer}`. OpenGL (glow) reports no adapter, so there only the overrides
+apply.
+
 ## Preferences
 
 Linux and FreeBSD store `app.ron` in `$XDG_CONFIG_HOME/pdfcraft/`, or
@@ -150,6 +180,7 @@ copies retain their current preferences locations.
 | `WGPU_BACKEND` | Graphics backend; by default Windows uses Direct3D 12, falling back to OpenGL |
 | `WGPU_DX12_PRESENTATION_SYSTEM` | Windows, Direct3D 12: `hwnd` presents through a swap chain on the window itself, which Windows stretches while the window is resized (#2738); unset or `visual`, PdfCraft presents through a DirectComposition visual |
 | `WGPU_VALIDATION_INDIRECT_CALL` | `1` turns wgpu's check of indirect draw arguments back on. PdfCraft draws nothing indirectly and turns it off, since the compute shader the check needs fails to compile on some drivers (Metal on an Intel Iris Pro), which lost the device at start-up |
+| `PDFCRAFT_REDUCED_EFFECTS` | `1` reduces effects (no shadows, fades, paper under loaded pages, caret blink, system-following animations or dithering) on any adapter; `0` never does; unset, they are reduced while wgpu draws on a CPU (see [Software renderers](#software-renderers)) |
 | `PDFCRAFT_RENDERER` | `gl` starts with OpenGL (glow) and never loads wgpu; `wgpu` reports a wgpu failure instead of retrying with OpenGL; unset, wgpu is retried with OpenGL when it can't start (see [Renderer fallback](#renderer-fallback)) |
 | `PDFCRAFT_TITLEBAR` | Linux: `app` draws PdfCraft's own title bar (window buttons in the tab strip, in the order of GNOME's `button-layout`, and resize edges); `system` keeps the frame winit or the desktop draws; unset, PdfCraft draws its own when the Wayland compositor draws no frames (GNOME), and leaves it to the desktop otherwise (KDE, Sway, Hyprland, X11). Where PdfCraft draws it, Preferences ▸ Use system title bar switches back to winit's frame without a restart; `system` also hides that option |
 | `PDFCRAFT_BUILD_LABEL` | Build time: a label for a local or patched build (letters, digits, inner dots), shown after the version in `--version`, About and the log (`0.7.1 (titlebar)`). `packaging/linux/package.sh` also puts it in the file names and the .rpm/.deb release (`1.titlebar`), which upgrades over the release of the same version |

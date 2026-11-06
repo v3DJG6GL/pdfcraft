@@ -576,7 +576,10 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
                 .fill(t.card)
                 .stroke(egui::Stroke::new(1.0, t.border))
                 .corner_radius(CornerRadius::same(12))
-                .shadow(egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(if t.dark() { 100 } else { 28 }) })
+                .shadow(crate::theme::shadow(
+                    ui.ctx(),
+                    egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(if t.dark() { 100 } else { 28 }) },
+                ))
                 .inner_margin(6)
         };
         let frame_resp = frame.show(ui, |ui| {
@@ -740,7 +743,10 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
                 .fill(t.card)
                 .stroke(Stroke::new(1.0, t.border))
                 .corner_radius(CornerRadius::same(10))
-                .shadow(egui::Shadow { offset: [0, 6], blur: 20, spread: 0, color: Color32::from_black_alpha(if t.dark() { 120 } else { 35 }) })
+                .shadow(crate::theme::shadow(
+                    ui.ctx(),
+                    egui::Shadow { offset: [0, 6], blur: 20, spread: 0, color: Color32::from_black_alpha(if t.dark() { 120 } else { 35 }) },
+                ))
                 .inner_margin(egui::Margin::symmetric(14, 12)),
         )
         .show(&ctx, |ui| {
