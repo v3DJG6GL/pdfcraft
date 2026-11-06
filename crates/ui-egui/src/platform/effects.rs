@@ -16,6 +16,14 @@
 //! None of this is saved except which adapter the last start drew on ([`KEY`]): egui's
 //! dithering is fixed before the adapter is known, so the next start turns it off from that
 //! ([`ReducedEffects::dithering_at_start`]).
+//!
+//! Cheaper frames alone don't lower the CPU while the pointer moves: egui draws a frame for every
+//! move, and over Remote Desktop moves arrive faster than a software rasterizer draws, so frames
+//! run back to back. With reduced effects the desktop app also caps the frame rate
+//! ([`FrameCap`], [`DEFAULT_MAX_FPS`] unless `PDFCRAFT_MAX_FPS` says otherwise): input that
+//! arrives meanwhile waits in the system's queue and is handled in the next frame.
+
+use web_time::{Duration, Instant};
 
 /// Whether effects are reduced: decided by the adapter, or forced either way.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,6 +81,59 @@ pub fn saved(settings: &serde_json::Value) -> bool {
     settings.get(KEY).and_then(serde_json::Value::as_bool).unwrap_or(false)
 }
 
+/// Frames a second while effects are reduced, unless `PDFCRAFT_MAX_FPS` says otherwise: Remote
+/// Desktop's own default rate, so nothing it would show is lost.
+pub const DEFAULT_MAX_FPS: u32 = 30;
+
+/// The most frames a second [`FrameCap`] allows.
+pub const MAX_FPS_LIMIT: u32 = 240;
+
+/// `PDFCRAFT_MAX_FPS`: frames a second while effects are reduced, `0` for no cap. `None` for
+/// anything else (unset, not a number, above [`MAX_FPS_LIMIT`]).
+pub fn max_fps_from_env(value: Option<&str>) -> Option<u32> {
+    value?.trim().parse::<u32>().ok().filter(|fps| *fps <= MAX_FPS_LIMIT)
+}
+
+/// The shortest time between two frames while effects are reduced. Only the desktop app installs
+/// one ([`Effects::frame_cap`]): tests, screenshots and the web build never wait.
+#[derive(Debug, Clone)]
+pub struct FrameCap {
+    interval: Duration,
+    last: Option<Instant>,
+    /// The window size at the last frame: a resize is drawn at once.
+    size: Option<egui::Vec2>,
+}
+
+impl FrameCap {
+    /// A cap of `fps` frames a second; `None` for 0 (no cap). Above [`MAX_FPS_LIMIT`] is limited.
+    pub fn per_second(fps: u32) -> Option<Self> {
+        let fps = fps.min(MAX_FPS_LIMIT);
+        (fps > 0).then(|| Self { interval: Duration::from_secs(1) / fps, last: None, size: None })
+    }
+
+    /// Frames a second this cap allows.
+    pub fn fps(&self) -> u32 {
+        let nanos = self.interval.as_nanos().max(1);
+        u32::try_from(1_000_000_000 / nanos).unwrap_or(u32::MAX)
+    }
+
+    /// How long to wait before a frame of a window of `size` that starts `now`; `None` for none:
+    /// the first frame, a resize, or the interval has passed.
+    pub(crate) fn wait(&self, now: Instant, size: egui::Vec2) -> Option<Duration> {
+        if self.size != Some(size) {
+            return None;
+        }
+        let elapsed = now.checked_duration_since(self.last?)?;
+        self.interval.checked_sub(elapsed).filter(|wait| !wait.is_zero())
+    }
+
+    /// A frame of a window of `size` started at `at`.
+    pub(crate) fn frame_started(&mut self, at: Instant, size: egui::Vec2) {
+        self.last = Some(at);
+        self.size = Some(size);
+    }
+}
+
 /// The app's reduced-effects state. Only [`Self::saved_value`] is saved.
 #[derive(Debug, Default)]
 pub struct Effects {
@@ -85,6 +146,8 @@ pub struct Effects {
     last_start_software: bool,
     /// The value last handed to egui ([`Self::publish`]).
     published: Option<bool>,
+    /// The frame cap while effects are reduced; the desktop app installs it.
+    pub frame_cap: Option<FrameCap>,
 }
 
 impl Effects {
@@ -115,6 +178,21 @@ impl Effects {
 
     pub(crate) fn restore(&mut self, settings: &serde_json::Value) {
         self.last_start_software = saved(settings);
+    }
+
+    /// How long to wait before this frame: only while effects are reduced and a cap is installed.
+    /// Records the frame, so call it once a frame, then wait.
+    pub(crate) fn frame_wait(&mut self, now: Instant, size: egui::Vec2) -> Option<Duration> {
+        let reduced = self.reduced();
+        let cap = self.frame_cap.as_mut()?;
+        let wait = if reduced { cap.wait(now, size) } else { None };
+        cap.frame_started(now + wait.unwrap_or_default(), size);
+        wait
+    }
+
+    /// The cap's frames a second while it applies.
+    pub fn max_fps(&self) -> Option<u32> {
+        self.frame_cap.as_ref().filter(|_| self.reduced()).map(FrameCap::fps)
     }
 
     /// Hand the current state to egui's context, where the theme and the painting code read it

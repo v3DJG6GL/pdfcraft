@@ -146,14 +146,19 @@ While wgpu's adapter is a CPU, PdfCraft reduces effects (`crates/ui-egui/src/pla
 - no blinking text cursor, which redraws the window each blink;
 - no animations while Preferences ▸ Animation effects follows the system setting: a wheel notch
   scrolls in the frame it arrives, as with the system's own setting off. An explicit On stays on;
+- at most 30 frames a second (`PDFCRAFT_MAX_FPS`, `0` for no cap). egui draws a frame for every
+  pointer move, and over Remote Desktop moves arrive faster than WARP draws, so cheaper frames
+  alone only meant more of them. Input that arrives meanwhile waits for the next frame, at most
+  one interval; a resize is drawn at once;
 - no dithering from the next start on. egui fixes it when the renderer is created, before the
   adapter is known, so the app saves which adapter the last start drew on
   (`last_start_software_renderer` in `app.ron`) and reads it before the window opens.
 
 `PDFCRAFT_REDUCED_EFFECTS=1` reduces effects on any adapter, `0` never does, and either one also
-decides dithering for that start. On the control channel, `ui.set reduced_effects auto|on|off`
+decides dithering for that start. The log says which applies: `reduced effects: on (software
+renderer), max 30 fps, dithering off`. On the control channel, `ui.set reduced_effects auto|on|off`
 (or `--reduced_effects`) overrides it for the session, and `ui.state.reduced_effects` reports
-`{mode, active, software_renderer}`. OpenGL (glow) reports no adapter, so there only the overrides
+`{mode, active, software_renderer, max_fps}`. OpenGL (glow) reports no adapter, so there only the overrides
 apply.
 
 ## Preferences
@@ -181,6 +186,7 @@ copies retain their current preferences locations.
 | `WGPU_DX12_PRESENTATION_SYSTEM` | Windows, Direct3D 12: `hwnd` presents through a swap chain on the window itself, which Windows stretches while the window is resized (#2738); unset or `visual`, PdfCraft presents through a DirectComposition visual |
 | `WGPU_VALIDATION_INDIRECT_CALL` | `1` turns wgpu's check of indirect draw arguments back on. PdfCraft draws nothing indirectly and turns it off, since the compute shader the check needs fails to compile on some drivers (Metal on an Intel Iris Pro), which lost the device at start-up |
 | `PDFCRAFT_REDUCED_EFFECTS` | `1` reduces effects (no shadows, fades, paper under loaded pages, caret blink, system-following animations or dithering) on any adapter; `0` never does; unset, they are reduced while wgpu draws on a CPU (see [Software renderers](#software-renderers)) |
+| `PDFCRAFT_MAX_FPS` | Frames a second while effects are reduced: `1` to `240`, `0` for no cap; unset or anything else, 30 (see [Software renderers](#software-renderers)) |
 | `PDFCRAFT_RENDERER` | `gl` starts with OpenGL (glow) and never loads wgpu; `wgpu` reports a wgpu failure instead of retrying with OpenGL; unset, wgpu is retried with OpenGL when it can't start (see [Renderer fallback](#renderer-fallback)) |
 | `PDFCRAFT_TITLEBAR` | Linux: `app` draws PdfCraft's own title bar (window buttons in the tab strip, in the order of GNOME's `button-layout`, and resize edges); `system` keeps the frame winit or the desktop draws; unset, PdfCraft draws its own when the Wayland compositor draws no frames (GNOME), and leaves it to the desktop otherwise (KDE, Sway, Hyprland, X11). Where PdfCraft draws it, Preferences ▸ Use system title bar switches back to winit's frame without a restart; `system` also hides that option |
 | `PDFCRAFT_BUILD_LABEL` | Build time: a label for a local or patched build (letters, digits, inner dots), shown after the version in `--version`, About and the log (`0.7.1 (titlebar)`). `packaging/linux/package.sh` also puts it in the file names and the .rpm/.deb release (`1.titlebar`), which upgrades over the release of the same version |
