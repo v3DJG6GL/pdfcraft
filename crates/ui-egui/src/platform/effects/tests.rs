@@ -74,3 +74,55 @@ fn the_state_is_handed_to_egui_once_per_change() {
     assert!(e.publish(&ctx));
     assert!(!reduced(&ctx));
 }
+
+#[test]
+fn the_frame_cap_waits_out_the_rest_of_the_interval() {
+    let size = egui::vec2(1440.0, 920.0);
+    let mut cap = FrameCap::per_second(30).unwrap();
+    assert_eq!(cap.fps(), 30);
+    let t0 = Instant::now();
+    assert_eq!(cap.wait(t0, size), None, "the first frame never waits");
+    cap.frame_started(t0, size);
+    let wait = cap.wait(t0 + Duration::from_millis(10), size).unwrap();
+    assert!((wait.as_secs_f64() - (1.0 / 30.0 - 0.010)).abs() < 0.001, "{wait:?}");
+    assert_eq!(cap.wait(t0 + Duration::from_millis(34), size), None, "the interval has passed");
+    assert_eq!(cap.wait(t0 + Duration::from_millis(10), egui::vec2(1000.0, 920.0)), None, "a resize is drawn at once");
+    assert_eq!(cap.wait(t0, size), Some(Duration::from_secs(1) / 30), "right after a frame: the whole interval");
+
+    assert!(FrameCap::per_second(0).is_none(), "0 is no cap");
+    assert_eq!(FrameCap::per_second(100_000).unwrap().fps(), MAX_FPS_LIMIT);
+}
+
+#[test]
+fn only_reduced_effects_wait_for_the_cap() {
+    let size = egui::vec2(800.0, 600.0);
+    let t0 = Instant::now();
+    let soon = t0 + Duration::from_millis(5);
+    let mut e = effects(ReducedEffects::Auto, Some(true));
+    assert_eq!(e.frame_wait(t0, size), None, "no cap installed: tests and the web never wait");
+    e.frame_cap = FrameCap::per_second(DEFAULT_MAX_FPS);
+    assert_eq!(e.max_fps(), Some(30));
+    assert_eq!(e.frame_wait(t0, size), None);
+    let wait = e.frame_wait(soon, size).unwrap();
+    assert!(wait > Duration::from_millis(25) && wait < Duration::from_millis(30), "{wait:?}");
+    // The next frame counts from the end of that wait.
+    let after = soon + wait + Duration::from_millis(1);
+    assert!(e.frame_wait(after, size).is_some());
+
+    // The same rhythm with reduced effects off: a frame 5 ms after the last is drawn at once.
+    let mut off = effects(ReducedEffects::Off, Some(true));
+    off.frame_cap = FrameCap::per_second(DEFAULT_MAX_FPS);
+    assert_eq!(off.max_fps(), None);
+    assert_eq!(off.frame_wait(t0, size), None);
+    assert_eq!(off.frame_wait(soon, size), None, "a GPU, or reduced effects off, never waits");
+}
+
+#[test]
+fn max_fps_comes_from_the_environment() {
+    assert_eq!(max_fps_from_env(Some("0")), Some(0));
+    assert_eq!(max_fps_from_env(Some("24")), Some(24));
+    assert_eq!(max_fps_from_env(Some(" 60 ")), Some(60));
+    for other in [Some("abc"), Some("-5"), Some("100000"), Some(""), None] {
+        assert_eq!(max_fps_from_env(other), None, "{other:?}");
+    }
+}
