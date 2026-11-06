@@ -445,6 +445,14 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     v.menu_corner_radius = CornerRadius::same(8);
     v.window_shadow = egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(if t.dark() { 110 } else { 38 }) };
     v.popup_shadow = egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(if t.dark() { 90 } else { 30 }) };
+    if crate::effects::reduced(ctx) {
+        // A software rasterizer fills every pixel of a blurred shadow, and a dialog's covers
+        // more than the dialog; the window border still marks the edge. A blinking caret
+        // redraws the whole window each blink.
+        v.window_shadow = egui::Shadow::NONE;
+        v.popup_shadow = egui::Shadow::NONE;
+        v.text_cursor.blink = false;
+    }
     for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
         w.corner_radius = CornerRadius::same(t.radius);
         w.fg_stroke.color = t.text;
@@ -492,6 +500,11 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     ctx.set_style_of(egui::Theme::Light, style.clone());
     ctx.set_style_of(egui::Theme::Dark, style);
     ctx.data_mut(|d| d.insert_temp(direction_key(), rtl));
+}
+
+/// A floating surface's shadow, or none with reduced effects (`platform/effects.rs`).
+pub(crate) fn shadow(ctx: &egui::Context, shadow: egui::Shadow) -> egui::Shadow {
+    if crate::effects::reduced(ctx) { egui::Shadow::NONE } else { shadow }
 }
 
 /// Return the stable egui id holding the current right-to-left style flag.

@@ -351,3 +351,95 @@ fn page_shadow_preference_round_trips_and_ignores_invalid_settings() {
     assert!(app.set_option("show_page_edge_shadows", "maybe").is_err());
     assert_eq!(enabled(&app), true);
 }
+
+/// The page's paper: an unblurred rect filled with white exactly over the page.
+fn paper_rects(h: &Harness<'static, PdfCraftApp>, page: egui::Rect) -> usize {
+    fn count(shape: &egui::Shape, page: egui::Rect) -> usize {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().map(|s| count(s, page)).sum(),
+            egui::Shape::Rect(r) if r.fill == egui::Color32::WHITE && r.blur_width == 0.0 && r.rect == page => 1,
+            _ => 0,
+        }
+    }
+    h.output().shapes.iter().map(|s| count(&s.shape, page)).sum()
+}
+
+fn wait_for_rasters(h: &mut Harness<'static, PdfCraftApp>) {
+    for _ in 0..400 {
+        h.run_steps(2);
+        if !h.state().render_pending() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!h.state().render_pending(), "the page rasters must be ready");
+    h.run_steps(2);
+}
+
+#[test]
+fn reduced_effects_hide_page_shadows_and_fades_but_keep_the_preference() {
+    for organize in [false, true] {
+        let mut h = harness("light");
+        if organize {
+            h.state_mut().set_option("organize", "on").unwrap();
+            h.state_mut().set_option("grid-zoom", "300").unwrap();
+        }
+        h.run_steps(4);
+        scroll_down(&mut h, 100.0);
+        let (shadows_before, fades_before) = (shadows(&h, organize), viewport_fades(&h));
+        assert!(!shadows_before.is_empty() && !fades_before.is_empty(), "organize={organize}");
+
+        h.state_mut().set_option("reduced_effects", "on").unwrap();
+        h.run_steps(2);
+        assert!(shadows(&h, organize).is_empty(), "shadows remain, organize={organize}");
+        assert!(viewport_fades(&h).is_empty(), "fades remain, organize={organize}");
+        assert!(h.state().show_page_edge_shadows, "the preference is untouched");
+        let saved: serde_json::Value = serde_json::from_str(&h.state().persist()).unwrap();
+        assert_eq!(saved["show_page_edge_shadows"], true, "and saved as it was");
+
+        h.state_mut().set_option("reduced_effects", "off").unwrap();
+        h.run_steps(2);
+        assert_eq!(shadows(&h, organize), shadows_before, "organize={organize}");
+        assert_eq!(viewport_fades(&h), fades_before, "organize={organize}");
+
+        // Left to the adapter: a software rasterizer reduces them, as `on` does.
+        h.state_mut().set_option("reduced_effects", "auto").unwrap();
+        h.state_mut().effects.set_software_renderer(true);
+        h.run_steps(2);
+        assert!(shadows(&h, organize).is_empty() && viewport_fades(&h).is_empty(), "organize={organize}");
+    }
+}
+
+#[test]
+fn reduced_effects_skip_the_paper_under_a_loaded_page_only() {
+    let mut h = harness("light");
+    h.state_mut().set_option("reduced_effects", "on").unwrap();
+    wait_for_rasters(&mut h);
+    let page = h.state().views[0].page_screen_rect(0).unwrap();
+    assert_eq!(paper_rects(&h, page), 0, "a loaded raster covers the page, so no paper is drawn under it");
+    h.state_mut().set_option("reduced_effects", "off").unwrap();
+    h.run_steps(2);
+    assert_eq!(paper_rects(&h, page), 1, "without reduced effects the paper stays");
+}
+
+#[test]
+fn reduced_effects_restyle_the_open_window() {
+    let mut h = harness("dark");
+    let visuals = h.ctx.global_style().visuals.clone();
+    assert_ne!(visuals.window_shadow, egui::Shadow::NONE);
+    assert!(visuals.text_cursor.blink);
+    h.state_mut().set_option("reduced_effects", "on").unwrap();
+    h.run_steps(1);
+    let reduced = h.ctx.global_style().visuals.clone();
+    assert_eq!(reduced.window_shadow, egui::Shadow::NONE);
+    assert_eq!(reduced.popup_shadow, egui::Shadow::NONE);
+    assert!(!reduced.text_cursor.blink);
+    // A theme change rebuilds the visuals, and must not bring the shadows back.
+    h.state_mut().set_option("theme", "light").unwrap();
+    h.run_steps(1);
+    assert_eq!(h.ctx.global_style().visuals.window_shadow, egui::Shadow::NONE);
+    h.state_mut().set_option("reduced_effects", "off").unwrap();
+    h.run_steps(1);
+    assert_ne!(h.ctx.global_style().visuals.window_shadow, egui::Shadow::NONE);
+    assert!(h.ctx.global_style().visuals.text_cursor.blink);
+}

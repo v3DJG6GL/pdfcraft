@@ -126,15 +126,15 @@ fn opengl_is_the_fallback_unless_a_renderer_was_chosen() {
     assert!(!retry_with_gl(RendererChoice::Wgpu, false));
     assert!(!retry_with_gl(RendererChoice::Gl, false));
     // Each run states its renderer rather than relying on eframe's default.
-    assert_eq!(native_options(false, false, eframe::Renderer::Wgpu).renderer, eframe::Renderer::Wgpu);
-    assert_eq!(native_options(false, false, eframe::Renderer::Glow).renderer, eframe::Renderer::Glow);
+    assert_eq!(native_options(false, false, eframe::Renderer::Wgpu, true).renderer, eframe::Renderer::Wgpu);
+    assert_eq!(native_options(false, false, eframe::Renderer::Glow, true).renderer, eframe::Renderer::Glow);
 }
 
 #[test]
 fn the_desktop_frame_is_turned_off_only_when_the_app_draws_one() {
     use super::native_options;
-    assert_eq!(native_options(false, false, eframe::Renderer::Glow).viewport.decorations, None);
-    assert_eq!(native_options(false, true, eframe::Renderer::Glow).viewport.decorations, Some(false));
+    assert_eq!(native_options(false, false, eframe::Renderer::Glow, true).viewport.decorations, None);
+    assert_eq!(native_options(false, true, eframe::Renderer::Glow, true).viewport.decorations, Some(false));
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn the_window_and_windows_taskbar_icons_load_from_the_bundled_png() {
     assert!(icon.width > 0 && icon.height > 0);
     assert_eq!(icon.rgba.len(), (icon.width as usize) * (icon.height as usize) * 4);
     #[cfg(not(target_os = "windows"))]
-    assert_eq!(super::native_options(false, false, eframe::Renderer::Glow).viewport.icon.as_deref(), Some(&icon));
+    assert_eq!(super::native_options(false, false, eframe::Renderer::Glow, true).viewport.icon.as_deref(), Some(&icon));
     #[cfg(target_os = "windows")]
     {
         // None would load eframe's default icon; only the explicit empty sentinel prevents
@@ -175,6 +175,60 @@ fn a_software_renderer_is_shown_to_the_user() {
         super::notify_software_renderer(&mut app, gpu);
         assert!(app.toast.is_none(), "{gpu:?}: {:?}", app.toast);
     }
+}
+
+#[test]
+fn a_software_rasterizer_reduces_effects_and_a_gpu_does_not() {
+    use eframe::wgpu::DeviceType;
+    let mut app = super::PdfCraftApp::new();
+    assert_eq!(app.effects.software_renderer(), None);
+    super::adapter_found(&mut app, DeviceType::Cpu);
+    assert!(app.effects.reduced(), "WARP or llvmpipe reduces effects");
+    assert!(app.toast.is_some(), "and is still announced");
+    for gpu in [DeviceType::IntegratedGpu, DeviceType::DiscreteGpu, DeviceType::VirtualGpu, DeviceType::Other] {
+        let mut app = super::PdfCraftApp::new();
+        super::adapter_found(&mut app, gpu);
+        assert_eq!(app.effects.software_renderer(), Some(false), "{gpu:?}");
+        assert!(!app.effects.reduced(), "{gpu:?}");
+    }
+}
+
+#[test]
+fn the_software_flag_is_read_from_settings_as_eframe_writes_them() {
+    use pdfcraft_ui_egui::effects;
+    let app_ron = |key: &str, json: &str| {
+        let entries = std::collections::HashMap::from([(key.to_string(), json.to_string()), ("egui".to_string(), "(zoom: 1.0)".to_string())]);
+        ron::ser::to_string_pretty(&entries, ron::ser::PrettyConfig::default()).unwrap_or_default()
+    };
+    let flag = |text: &str| super::settings_in(text).is_some_and(|s| effects::saved(&s));
+    // What the app itself saves after a software start.
+    let mut app = super::PdfCraftApp::new();
+    super::adapter_found(&mut app, eframe::wgpu::DeviceType::Cpu);
+    assert!(flag(&app_ron("pdfcraft", &app.persist())));
+    assert!(flag(&app_ron(super::LEGACY_STORAGE_KEY, r#"{"last_start_software_renderer":true}"#)));
+    assert!(!flag(&app_ron("pdfcraft", r#"{"last_start_software_renderer":false}"#)));
+    for unreadable in [
+        app_ron("pdfcraft", r#"{"theme":"dark"}"#),
+        app_ron("other", r#"{"last_start_software_renderer":true}"#),
+        app_ron("pdfcraft", "{"),
+        "(".into(),
+        String::new(),
+    ] {
+        assert!(!flag(&unreadable), "{unreadable:?}");
+    }
+}
+
+#[test]
+fn a_software_start_turns_dithering_off_at_the_next_start() {
+    use pdfcraft_ui_egui::effects::ReducedEffects;
+    for renderer in [eframe::Renderer::Wgpu, eframe::Renderer::Glow] {
+        assert!(!super::native_options(false, false, renderer, false).dithering, "{renderer:?}");
+        assert!(super::native_options(false, false, renderer, true).dithering, "{renderer:?}");
+    }
+    assert_eq!(super::reduced_effects_choice(Some("1")), ReducedEffects::On);
+    assert_eq!(super::reduced_effects_choice(Some("0")), ReducedEffects::Off);
+    assert_eq!(super::reduced_effects_choice(Some("sometimes")), ReducedEffects::Auto);
+    assert_eq!(super::reduced_effects_choice(None), ReducedEffects::Auto);
 }
 
 #[test]
@@ -340,7 +394,7 @@ fn a_gpu_error_while_a_window_is_set_up_is_returned_not_a_panic() {
     // than the device allows.
     use eframe::wgpu;
     let _gpu = gpu();
-    let native = super::native_options(false, false, eframe::Renderer::Wgpu);
+    let native = super::native_options(false, false, eframe::Renderer::Wgpu, true);
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { panic!("default setup creates its own instance") };
     let instance = pollster::block_on(native.wgpu_options.wgpu_setup.new_instance());
     let options = wgpu::RequestAdapterOptions { power_preference: setup.power_preference, ..Default::default() };
@@ -401,7 +455,7 @@ fn vendor_provenance_egui_wgpu_catch_errors_identity() {
 fn pipeline_creation_error_is_returned_and_device_remains_usable() {
     use eframe::{egui_wgpu, wgpu};
     let _gpu = gpu();
-    let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
+    let mut native = super::native_options(false, false, eframe::Renderer::Wgpu, true);
     let egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { panic!("default setup creates its own instance") };
     let instance = pollster::block_on(native.wgpu_options.wgpu_setup.new_instance());
     let options = wgpu::RequestAdapterOptions { power_preference: setup.power_preference, ..Default::default() };

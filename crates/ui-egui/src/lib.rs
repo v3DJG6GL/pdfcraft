@@ -141,6 +141,7 @@ pub use persist::units;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persist::window_state;
 use platform::drag_pointer;
+pub use platform::effects;
 use platform::file_filter;
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::file_watch;
@@ -359,6 +360,9 @@ pub struct PdfCraftApp {
     pub reading_colors: pdfcraft_render::ReadingColors,
     /// App-wide page decoration only; never part of a PDF edit or render request.
     pub show_page_edge_shadows: bool,
+    /// Reduced effects while a software rasterizer draws (`platform/effects.rs`): session only,
+    /// apart from which adapter the last start drew on.
+    pub effects: effects::Effects,
     /// The Linux portal is enabled only by the native host, and starts on the first System choice.
     #[cfg(target_os = "linux")]
     desktop_theme: Option<pdfcraft_platform::desktop_theme::DesktopTheme>,
