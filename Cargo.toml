@@ -146,18 +146,18 @@ vello_cpu = { path = "vendor/vello_cpu" }
 # Only the retained `vendor/winit` and `vendor/egui-wgpu` copies are provenance for the app's
 # earlier patches and their source guards, not path patches; the other `vendor/` entries above
 # remain real path patches. See vendor/README.md and the migration plan.
-ecolor = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-emath = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-epaint = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-epaint_default_fonts = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui-winit = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui-wgpu = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui_glow = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui_extras = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui_kittest = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui_system_font_provider = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-eframe = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui_demo_lib = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
-egui_inspection = { git = "https://github.com/v3DJG6GL/egui.git", rev = "4d878c4b1bad857363fed9f8c47b5b882bc4ade2" }
+ecolor = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+emath = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+epaint = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+epaint_default_fonts = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui-winit = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui-wgpu = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui_glow = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui_extras = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui_kittest = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui_system_font_provider = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+eframe = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui_demo_lib = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
+egui_inspection = { git = "https://github.com/v3DJG6GL/egui.git", rev = "a992d0f46e1901a9675598b35ac06357cd6b0e01" }
 winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
