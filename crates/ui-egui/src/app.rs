@@ -477,6 +477,14 @@ impl PdfCraftApp {
 }
 
 impl eframe::App for PdfCraftApp {
+    /// Opaque, like the panels that cover it: the window isn't transparent. eframe's default is
+    /// translucent, and a painter that repaints only what changed can't paint a translucent
+    /// background over the pixels it keeps (they would show through), so it would repaint every
+    /// frame whole (`platform/effects.rs`).
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        visuals.panel_fill.to_opaque().to_normalized_gamma_f32()
+    }
+
     /// While files are dragged over the window the system sends no pointer moves, so egui
     /// would keep the place the pointer entered at: tell it where the pointer really is, so the
     /// page grid can show (and use) the gap under it.
