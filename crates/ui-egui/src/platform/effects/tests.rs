@@ -126,3 +126,13 @@ fn max_fps_comes_from_the_environment() {
         assert_eq!(max_fps_from_env(other), None, "{other:?}");
     }
 }
+
+#[test]
+fn the_window_background_is_opaque_so_partial_repaint_can_keep_pixels() {
+    use eframe::App as _;
+    let app = crate::PdfCraftApp::new();
+    for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
+        let [.., alpha] = app.clear_color(&visuals);
+        assert_eq!(alpha, 1.0, "egui-wgpu repaints everything under a translucent clear colour");
+    }
+}
