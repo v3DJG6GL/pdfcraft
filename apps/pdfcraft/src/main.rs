@@ -280,7 +280,7 @@ fn main() -> eframe::Result {
     let first = if choice == RendererChoice::Gl { eframe::Renderer::Glow } else { eframe::Renderer::Wgpu };
     let result = eframe::run_native(
         "PdfCraft",
-        native_options(launch.integrated, launch.window_controls.is_some(), first, launch.dithering),
+        native_options(launch.integrated, launch.window_controls.is_some(), first, launch.dithering, partial_repaint(launch.reduced_effects)),
         app_creator(
             launch.clone(),
             Rc::clone(&started),
@@ -298,7 +298,13 @@ fn main() -> eframe::Result {
             log::error!("the GPU renderer (wgpu) didn't start: {e}. Starting with OpenGL instead; set PDFCRAFT_RENDERER=gl to skip wgpu.");
             eframe::run_native(
                 "PdfCraft",
-                native_options(launch.integrated, launch.window_controls.is_some(), eframe::Renderer::Glow, launch.dithering),
+                native_options(
+                    launch.integrated,
+                    launch.window_controls.is_some(),
+                    eframe::Renderer::Glow,
+                    launch.dithering,
+                    partial_repaint(launch.reduced_effects),
+                ),
                 app_creator(
                     launch,
                     started,
@@ -328,6 +334,19 @@ fn renderer_choice(value: Option<&str>) -> RendererChoice {
         Some("wgpu") => RendererChoice::Wgpu,
         Some("gl" | "opengl" | "glow") => RendererChoice::Gl,
         _ => RendererChoice::Auto,
+    }
+}
+
+/// Whether the window repaints only what changed between frames, with reduced effects: on a
+/// software rasterizer every repainted pixel costs CPU time, and a frame that looks the same is
+/// not drawn at all. egui decides by the adapter, as reduced effects do; `PDFCRAFT_REDUCED_EFFECTS`
+/// forces it either way.
+fn partial_repaint(effects: effects::ReducedEffects) -> eframe::egui_wgpu::PartialRepaint {
+    use eframe::egui_wgpu::PartialRepaint;
+    match effects {
+        effects::ReducedEffects::Auto => PartialRepaint::SoftwareAdapters,
+        effects::ReducedEffects::On => PartialRepaint::Always,
+        effects::ReducedEffects::Off => PartialRepaint::Off,
     }
 }
 
@@ -386,7 +405,13 @@ fn retry_with_gl(choice: RendererChoice, app_started: bool) -> bool {
 }
 
 /// The window and renderer settings for one run.
-fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer, dithering: bool) -> eframe::NativeOptions {
+fn native_options(
+    integrated: bool,
+    app_frame: bool,
+    renderer: eframe::Renderer,
+    dithering: bool,
+    partial_repaint: eframe::egui_wgpu::PartialRepaint,
+) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("PdfCraft")
         .with_inner_size([1440.0, 920.0])
@@ -423,6 +448,7 @@ fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer,
     // Noise in every pixel against banding in gradients; a software rasterizer computes it on
     // the CPU, so it is left out after a start that drew in software (`effects`).
     native.dithering = dithering;
+    native.wgpu_options.partial_repaint = partial_repaint;
     if renderer == eframe::Renderer::Wgpu {
         configure_gpu(&mut native);
     }
@@ -629,7 +655,8 @@ fn log_effects(app: &PdfCraftApp, dithering: bool) {
     };
     let cap = app.effects.max_fps().map_or_else(|| "no frame cap".to_string(), |fps| format!("max {fps} fps"));
     let state = if app.effects.reduced() { "on" } else { "off" };
-    log::info!("reduced effects: {state} ({why}), {cap}, dithering {}", if dithering { "on" } else { "off" });
+    let partial = if app.effects.reduced() && app.effects.software_renderer().is_some() { "on" } else { "off" };
+    log::info!("reduced effects: {state} ({why}), {cap}, dithering {}, partial repaint {partial}", if dithering { "on" } else { "off" });
 }
 
 /// Tell the user when wgpu draws on the processor (WARP on Windows, llvmpipe on Linux) rather than
