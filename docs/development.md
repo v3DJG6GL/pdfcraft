@@ -150,6 +150,10 @@ While wgpu's adapter is a CPU, PdfCraft reduces effects (`crates/ui-egui/src/pla
   pointer move, and over Remote Desktop moves arrive faster than WARP draws, so cheaper frames
   alone only meant more of them. Input that arrives meanwhile waits for the next frame, at most
   one interval; a resize is drawn at once;
+- repaint only what changed (egui's partial repaint, `egui_wgpu::PartialRepaint`): the window
+  keeps its last frame, a frame that looks the same as the one before is neither drawn nor
+  presented, and one that changed in a few places (a hover highlight, a caret) is drawn only
+  there;
 - no dithering from the next start on. egui fixes it when the renderer is created, before the
   adapter is known, so the app saves which adapter the last start drew on
   (`last_start_software_renderer` in `app.ron`) and reads it before the window opens.
