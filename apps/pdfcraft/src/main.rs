@@ -655,7 +655,8 @@ fn log_effects(app: &PdfCraftApp, dithering: bool) {
     };
     let cap = app.effects.max_fps().map_or_else(|| "no frame cap".to_string(), |fps| format!("max {fps} fps"));
     let state = if app.effects.reduced() { "on" } else { "off" };
-    let partial = if app.effects.reduced() && app.effects.software_renderer().is_some() { "on" } else { "off" };
+    // egui decides whether partial repaint applies, and warns when it can't.
+    let partial = if app.effects.reduced() && app.effects.software_renderer().is_some() { "requested" } else { "off" };
     log::info!("reduced effects: {state} ({why}), {cap}, dithering {}, partial repaint {partial}", if dithering { "on" } else { "off" });
 }
 
