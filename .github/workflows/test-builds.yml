@@ -1,0 +1,176 @@
+# Test builds from a test/** branch of a fork: Windows (MSI, portable zip) and Linux (AppImage,
+# deb, rpm, tar.gz, Flatpak), all x86_64 and unsigned. Not for upstream: it never goes into a pull
+# request (AGENTS.md, CI workflows). Each job packages exactly as a release does
+# (packaging/windows/package.ps1, packaging/linux/package.sh, packaging/linux/flatpak-bundle.sh).
+#
+# The version is set to the latest PdfCraft release, so a test build doesn't offer to update itself
+# to it; the build label (test.<run number>) tells it apart.
+name: Test builds
+
+on:
+  push:
+    branches: ["test/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-builds-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  PDFCRAFT_BUILD_LABEL: test.${{ github.run_number }}
+
+jobs:
+  version:
+    name: Latest release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.latest.outputs.version }}
+    steps:
+      - id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release view --repo storytold/pdfcraft --json tagName --jq .tagName)"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "Building as ${tag#v} (${PDFCRAFT_BUILD_LABEL})"
+
+  windows:
+    name: Windows x64 (unsigned)
+    needs: [version]
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out craft-fonts (the ref release.yml uses)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          path: craft-fonts
+          persist-credentials: false
+      - name: Read the pinned craft-i18n revision
+        id: i18n
+        shell: pwsh
+        run: "\"rev=$((Get-Content -Raw craft-i18n.rev).Trim())\" >> $env:GITHUB_OUTPUT"
+      - name: Check out craft-i18n (the translations)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ steps.i18n.outputs.rev }}
+          path: craft-i18n
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Set the version to the latest release
+        run: cargo xtask version set "${{ needs.version.outputs.version }}"
+      - name: Install WiX 5 and its extensions
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'wix'
+          dotnet tool install --tool-path $tools wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed.' }
+          $tools >> $env:GITHUB_PATH
+          $policy = Get-Content -Raw -LiteralPath packaging/windows/install-policy.json | ConvertFrom-Json
+          foreach ($extension in @($policy.extensions)) {
+            & (Join-Path $tools 'wix.exe') extension add -g "WixToolset.$extension.wixext/5.0.2"
+            if ($LASTEXITCODE -ne 0) { throw "WiX extension $extension installation failed." }
+          }
+      - name: Build and package (unsigned)
+        shell: pwsh
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}\craft-fonts
+          CRAFT_I18N_DIR: ${{ github.workspace }}\craft-i18n
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pdfcraft-windows-x64
+          path: dist/release/*
+          retention-days: 14
+          if-no-files-found: error
+
+  linux:
+    name: Linux x86_64 (unsigned)
+    needs: [version]
+    # The oldest supported glibc, as the release builds: the binaries run on newer distros.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out craft-fonts (the ref release.yml uses)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          path: craft-fonts
+          persist-credentials: false
+      - name: Check out craft-i18n
+        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@main
+      - uses: storytold/craft-common-actions/actions/install-linux-deps@main
+        with:
+          deb-arch: amd64
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: test-linux-x86_64
+      - name: Set the version to the latest release
+        run: cargo xtask version set "${{ needs.version.outputs.version }}"
+      - name: Build and package (AppImage, deb, rpm, tar.gz)
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+        run: packaging/linux/package.sh --formats "appimage deb rpm tar"
+      - name: Smoke-test the AppImage
+        run: |
+          appimage="$(ls dist/release/*.AppImage)"
+          chmod +x "$appimage"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pdfcraft-linux-x86_64
+          path: dist/release/*
+          retention-days: 14
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak x86_64 (unsigned)
+    needs: [version, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pdfcraft-linux-x86_64
+          path: dist/linux
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build the Flatpak bundle
+        env:
+          PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          shopt -s nullglob
+          tarballs=()
+          for f in dist/linux/pdfcraft-*-linux-x86_64.tar.gz; do
+            case "${f##*/}" in pdfcraft-cli-*) ;; *) tarballs+=("$f") ;; esac
+          done
+          [ "${#tarballs[@]}" -eq 1 ] || { echo "::error::expected one app tarball, found: ${tarballs[*]}"; exit 1; }
+          packaging/linux/flatpak-bundle.sh "${tarballs[0]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pdfcraft-flatpak-x86_64
+          path: dist/release/*.flatpak
+          retention-days: 14
+          if-no-files-found: error
